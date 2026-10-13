@@ -1,7 +1,7 @@
 #include <DHT.h> // Make sure to install the "DHT sensor library" by Adafruit in Arduino IDE
 
 // DHT11 Configuration
-#define DHTPIN A0       // Connecting DHT11 data pin to Analog Pin A0
+#define DHTPIN A1       // Connecting DHT11 data pin to Analog Pin A0
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 

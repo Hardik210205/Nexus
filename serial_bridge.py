@@ -1,54 +1,94 @@
 import serial
-import json
 import requests
 import time
-import sys
+import json
 
-# Configure this to the exact COM port you see in your Arduino IDE!
-SERIAL_PORT = 'COM5'
+SERIAL_PORT = "COM5"  # Change this to your Arduino's actual COM port
 BAUD_RATE = 9600
-API_URL = 'http://localhost:3000/api/telemetry' # Where we will send the Gateway Data
+API_URL = "http://localhost:3000/api/telemetry"
 
 def main():
-    print(f"[*] Starting Protocol Adapter (Serial -> HTTP)...")
-    try:
-        # Open serial connection
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=2)
-        print(f"[*] Successfully connected to Arduino on {SERIAL_PORT}")
-        print("[*] Listening for telemetry...\n")
-        
-        while True:
-            # Check if there is data waiting to be read
-            if ser.in_waiting > 0:
-                # Read the line and decode it
-                line = ser.readline().decode('utf-8').strip()
-                if line:
-                    print(f"[Arduino] {line}")
-                    
-                    try:
-                        # Validate it's proper JSON
-                        data = json.loads(line)
-                        
-                        # Forward the data to our future Gateway Core via HTTP POST
-                        try:
-                            response = requests.post(API_URL, json=data, timeout=3)
-                            print(f"   -> [Gateway] Forwarded Data! Status HTTP {response.status_code}")
-                            
-                        except requests.exceptions.RequestException as e:
-                            # If building the gateway, this is expected right now!
-                            print(f"   -> [Gateway] Failed to connect: is your Node.js Gateway running on port 3000?")
-                            
-                    except json.JSONDecodeError:
-                        print("   -> Ignored: Not valid JSON formatting")
-                        
-    except serial.SerialException as e:
-        print(f"[!] Serial Communication Error: {e}")
-        print("\n[!] CRITICAL FIX: Make sure the Serial Monitor inside the Arduino IDE is CLOSED before running this bridge script!")
-    except KeyboardInterrupt:
-        print("\n[*] Bridge shut down gracefully by user.")
-    finally:
-        if 'ser' in locals() and ser.is_open:
-            ser.close()
+    print("[*] Starting ARHB Serial Bridge...")
 
-if __name__ == '__main__':
+    try:
+        with serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=2) as ser:
+            print(f"[*] Connected to Arduino on {SERIAL_PORT}")
+
+            # Arduino may reset when the serial port opens.
+            time.sleep(2)
+            ser.reset_input_buffer()
+
+            print("[*] Waiting for ARHB events...\n")
+
+            while True:
+                raw_line = ser.readline()
+
+                if not raw_line:
+                    continue
+
+                try:
+                    line = raw_line.decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    print("[!] Ignored invalid serial data")
+                    continue
+
+                if not line:
+                    continue
+
+                print(f"[Arduino] {line}")
+
+                if line == "ARHB_READY":
+                    continue
+
+                fields = line.split(",")
+
+                if len(fields) != 7 or fields[0] != "EVENT":
+                    print("[!] Ignored: unexpected event format")
+                    continue
+
+                try:
+                    event = {
+                        "deviceId": "arhb_uno_1",
+                        "type": "telemetry",
+                        "eventType": "road_hazard_motion",
+                        "eventNumber": int(fields[1]),
+                        "latitude": float(fields[2]) if fields[2] else None,
+                        "longitude": float(fields[3]) if fields[3] else None,
+                        "satellites": int(fields[4]) if fields[4] else 0,
+                        "gpsDate": fields[5] or None,
+                        "gpsTime": fields[6] or None
+                    }
+                except ValueError:
+                    print("[!] Ignored: invalid event values")
+                    continue
+
+                try:
+                    response = requests.post(
+                        API_URL,
+                        json=event,
+                        timeout=5
+                    )
+
+                    if response.ok:
+                        print(
+                            f"[Gateway] Event {event['eventNumber']} "
+                            "forwarded successfully"
+                        )
+                    else:
+                        print(
+                            f"[Gateway] HTTP {response.status_code}: "
+                            f"{response.text[:200]}"
+                        )
+
+                except requests.RequestException as exc:
+                    print(f"[Gateway] Request failed: {exc}")
+
+    except serial.SerialException as exc:
+        print(f"[!] Serial error: {exc}")
+        print("[!] Check the COM port and close Arduino Serial Monitor.")
+
+    except KeyboardInterrupt:
+        print("\n[*] Bridge stopped.")
+
+if __name__ == "__main__":
     main()

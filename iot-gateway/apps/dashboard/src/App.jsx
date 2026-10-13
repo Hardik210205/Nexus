@@ -1,165 +1,307 @@
+
 import { useEffect, useState } from 'react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import L from 'leaflet';
 import { io } from 'socket.io-client';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Thermometer, Ruler, Database, LayoutDashboard, Settings, Router } from 'lucide-react';
+import 'leaflet/dist/leaflet.css';
 import './App.css';
 
-const socket = io('http://localhost:3000');
+// Fix default marker icons in Vite
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+  iconUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+  shadowUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+});
+
+const API_URL = 'http://localhost:3000';
+
+function formatDate(value) {
+  if (!value) return '—';
+  return value;
+}
 
 function App() {
-  const [temperature, setTemperature] = useState('--');
-  const [distance, setDistance] = useState('--');
+  const [events, setEvents] = useState([]);
   const [connected, setConnected] = useState(false);
-  const [logs, setLogs] = useState([]);
-  const [chartData, setChartData] = useState([]);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    socket.on('connect', () => {
-      setConnected(true);
-      addLog('🟢 Connected to Core WebSocket API');
-    });
+    let active = true;
 
-    socket.on('disconnect', () => {
-      setConnected(false);
-      addLog('🔴 Gateway Connection Lost');
-    });
+    fetch(`${API_URL}/api/events`)
+      .then((response) => {
+        if (!response.ok) throw new Error('Could not load event history');
+        return response.json();
+      })
+      .then((data) => {
+        if (active) {
+          const rows = Array.isArray(data)
+  ? data
+  : data.events || data.rows || [];
 
-    socket.on('telemetry_update', (msg) => {
-      // Parse payloads safely
-      let t = Number(msg.payload.temperature);
-      const d = Number(msg.payload.distance);
-      
-      // Hardware error filtering (so bad readings don't break our beautiful graphs!)
-      if (t < -100) t = 0; // Filter out the -999.0 errors from disconnected DHT sensors
-      const safeT = t.toFixed(1);
-      
-      const filteredD = d < 0 ? 0 : d.toFixed(1); // Set to 0 if out of bounds (-1)
-      
-      setTemperature(safeT);
-      setDistance(d < 0 ? 'Out of Range' : filteredD);
-      
-      const timeStr = new Date(msg.timestamp).toLocaleTimeString();
-      addLog(`⚡ Parsed telemetry from ${msg.source.deviceId}`);
-      
-      setChartData(prev => {
-        const newData = [...prev, { time: timeStr, temp: parseFloat(safeT), dist: parseFloat(filteredD) }];
-        if (newData.length > 25) newData.shift();
-        return newData;
+setEvents(
+  rows.map((event) => ({
+    ...event,
+    ...(typeof event.payload === 'object' && event.payload !== null
+      ? event.payload
+      : {}),
+  }))
+);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setError('Cannot load events. Check that the gateway is running.');
+        }
+      });
+
+    const socket = io(API_URL);
+
+    socket.on('connect', () => setConnected(true));
+    socket.on('disconnect', () => setConnected(false));
+
+    socket.on('telemetry_update', (event) => {
+      if (!active) return;
+
+      setEvents((previous) => {
+        const id = event.id ?? event.eventNumber;
+        const duplicate = previous.some(
+          (item) =>
+            item.id === id ||
+            (id != null && item.eventNumber === id)
+        );
+
+        if (duplicate) return previous;
+        return [event, ...previous].slice(0, 500);
       });
     });
 
     return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('telemetry_update');
+      active = false;
+      socket.disconnect();
     };
   }, []);
 
-  const addLog = (msg) => {
-    setLogs((prev) => [[new Date().toLocaleTimeString(), msg], ...prev].slice(0, 30));
-  };
+  // Handle either direct API fields or the stored JSON payload.
+  const normalizedEvents = events.map((event) => {
+    let payload = event;
+
+    if (typeof event.payload_json === 'string') {
+      try {
+        payload = { ...event, ...JSON.parse(event.payload_json) };
+      } catch {
+        payload = event;
+      }
+    }
+
+    const latitude = Number(payload.latitude);
+    const longitude = Number(payload.longitude);
+
+    return {
+      ...payload,
+      id: payload.id ?? payload.eventNumber ?? `${latitude},${longitude}`,
+      latitude:
+        payload.latitude !== null &&
+        payload.latitude !== undefined &&
+        payload.latitude !== ''
+          ? latitude
+          : null,
+      longitude:
+        payload.longitude !== null &&
+        payload.longitude !== undefined &&
+        payload.longitude !== ''
+          ? longitude
+          : null,
+      eventType: payload.eventType || payload.type || 'road_hazard_motion',
+    };
+  });
+
+  const mappedEvents = normalizedEvents.filter(
+    (event) =>
+      Number.isFinite(event.latitude) &&
+      Number.isFinite(event.longitude) &&
+      event.latitude >= -90 &&
+      event.latitude <= 90 &&
+      event.longitude >= -180 &&
+      event.longitude <= 180 &&
+      (event.latitude !== 0 || event.longitude !== 0)
+  );
+
+  const latestEvent = normalizedEvents[0];
+
+  const mapCenter = mappedEvents.length
+    ? [mappedEvents[0].latitude, mappedEvents[0].longitude]
+    : [22.298349, 73.196144];
 
   return (
-    <>
-      <aside>
-        <div className="brand">
-          <Router size={28} color="#8b5cf6" />
-          IoT Gateway
+    <main className="dashboard">
+      <header className="dashboard-header">
+        <div>
+          <p className="eyebrow">NEXUS UNIVERSAL IoT GATEWAY</p>
+          <h1>Adaptive Road Hazard Beacon</h1>
+          <p className="subtitle">
+            Live sensor telemetry and GPS event monitoring
+          </p>
         </div>
-        
-        <div className="nav-item active"><LayoutDashboard size={20}/> Dashboard</div>
-        <div className="nav-item"><Database size={20}/> Device Routes</div>
-        <div className="nav-item"><Activity size={20}/> Monitoring</div>
-        <div className="nav-item"><Settings size={20}/> Settings</div>
-      </aside>
 
-      <main>
-        <header className="topbar">
+        <div className={`connection-status ${connected ? 'online' : 'offline'}`}>
+          <span className="status-dot" />
+          {connected ? 'Live connection' : 'Connecting…'}
+        </div>
+      </header>
+
+      {error && <p className="error-message">{error}</p>}
+
+      <section className="stats-grid">
+        <article className="stat-card">
+          <span>Total events</span>
+          <strong>{normalizedEvents.length}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Events with GPS</span>
+          <strong>{mappedEvents.length}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Events without GPS</span>
+          <strong>{normalizedEvents.length - mappedEvents.length}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Latest event</span>
+          <strong className="latest-value">
+            {latestEvent ? `#${latestEvent.eventNumber ?? '—'}` : 'None'}
+          </strong>
+        </article>
+      </section>
+
+      <section className="panel map-panel">
+        <div className="panel-heading">
           <div>
-            <h1>Gateway Dashboard</h1>
-            <p className="subtitle">Universal protocol-agnostic edge monitoring (Phase 10)</p>
+            <h2>GPS Event Map</h2>
+            <p>Markers show events with valid GPS coordinates.</p>
           </div>
-          
-          <div className={`status-badge ${!connected ? 'offline' : ''}`}>
-            <div style={{
-              width: '8px', 
-              height: '8px', 
-              borderRadius: '50%', 
-              backgroundColor: connected ? '#10b981' : '#ef4444'
-            }}></div>
-            {connected ? 'Gateway Online' : 'Gateway Offline'}
-          </div>
-        </header>
-
-        <div className="metrics-grid">
-          <div className="metric-card">
-            <div className="metric-header">
-              <span>Ambient Temperature</span>
-              <Thermometer size={20} color="#f43f5e" />
-            </div>
-            <div className="metric-value">
-              {temperature} <span className="metric-unit">°C</span>
-            </div>
-          </div>
-
-          <div className="metric-card">
-            <div className="metric-header">
-              <span>Ultrasonic Proximity</span>
-              <Ruler size={20} color="#38bdf8" />
-            </div>
-            <div className="metric-value">
-              {distance} {distance !== 'Out of Range' && <span className="metric-unit">cm</span>}
-            </div>
-          </div>
-          
-          <div className="metric-card">
-            <div className="metric-header">
-              <span>Sensor Health</span>
-              <Activity size={20} color="#10b981" />
-            </div>
-            <div className="metric-value status">
-              {connected && distance !== '--' ? 'Active & Normal' : 'Waiting...'}
-            </div>
-          </div>
+          <span className="count-badge">{mappedEvents.length} mapped</span>
         </div>
 
-        <div className="content-grid">
-          <div className="panel">
-            <h3>Live Telemetry Feed (Time vs Value)</h3>
-            <div style={{ width: '100%', height: 320 }}>
-              <ResponsiveContainer>
-                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                  <XAxis dataKey="time" stroke="#52525b" fontSize={12} tickMargin={10} />
-                  <YAxis yAxisId="left" stroke="#f43f5e" fontSize={12} domain={['auto', 'auto']} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#38bdf8" fontSize={12} />
-                  
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }}
-                    itemStyle={{ color: '#e4e4e7' }}
-                  />
-                  <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#f43f5e" strokeWidth={3} dot={false} name="Temp (°C)"/>
-                  <Line yAxisId="right" type="monotone" dataKey="dist" stroke="#38bdf8" strokeWidth={3} dot={false} name="Distance (cm)"/>
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+        <div className="map-wrapper">
+          <MapContainer
+            center={mapCenter}
+            zoom={13}
+            scrollWheelZoom
+            className="event-map"
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
 
-          <div className="panel">
-            <h3>Internal Event Router (Bus)</h3>
-            <div className="log-entries">
-              {logs.map((log, i) => (
-                <div key={i} className="log-entry">
-                  <span style={{ color: '#6b7280', marginRight: '8px' }}>[{log[0]}]</span> 
-                  {log[1]}
-                </div>
+            {mappedEvents.map((event, index) => (
+              <Marker
+                key={`${event.id}-${index}`}
+                position={[event.latitude, event.longitude]}
+              >
+                <Popup>
+                  <strong>Road Hazard Motion Event</strong>
+                  <br />
+                  Event: #{event.eventNumber ?? '—'}
+                  <br />
+                  Latitude: {event.latitude}
+                  <br />
+                  Longitude: {event.longitude}
+                  <br />
+                  Satellites: {event.satellites ?? '—'}
+                  <br />
+                  GPS date: {formatDate(event.gpsDate)}
+                  <br />
+                  GPS time: {formatDate(event.gpsTime)}
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </div>
+
+        {mappedEvents.length === 0 && (
+          <p className="map-note">
+            No valid GPS coordinates yet. The map will show markers when
+            an event contains valid latitude and longitude.
+          </p>
+        )}
+      </section>
+
+      <section className="panel history-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Event History</h2>
+            <p>Recent events received by the gateway</p>
+          </div>
+          <span className="count-badge">
+            {normalizedEvents.length} events
+          </span>
+        </div>
+
+        <div className="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Event #</th>
+                <th>Type</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>Satellites</th>
+                <th>GPS Date</th>
+                <th>GPS Time</th>
+                <th>Location</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {normalizedEvents.map((event, index) => (
+                <tr key={`${event.id}-${index}`}>
+                  <td>#{event.eventNumber ?? '—'}</td>
+                  <td>{event.eventType}</td>
+                  <td>{event.latitude ?? '—'}</td>
+                  <td>{event.longitude ?? '—'}</td>
+                  <td>{event.satellites ?? '—'}</td>
+                  <td>{formatDate(event.gpsDate)}</td>
+                  <td>{formatDate(event.gpsTime)}</td>
+                  <td>
+                    {event.latitude !== null && event.longitude !== null ? (
+                      <a
+                        href={`https://www.openstreetmap.org/?mlat=${event.latitude}&mlon=${event.longitude}#map=16/${event.latitude}/${event.longitude}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View location
+                      </a>
+                    ) : (
+                      'GPS unavailable'
+                    )}
+                  </td>
+                </tr>
               ))}
-              {logs.length === 0 && <span style={{color: '#71717a'}}>Awaiting adapter data...</span>}
-            </div>
-          </div>
+
+              {normalizedEvents.length === 0 && (
+                <tr>
+                  <td colSpan="8" className="empty-state">
+                    No events recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      </main>
-    </>
+      </section>
+
+      <footer className="dashboard-footer">
+        ARHB · Nexus Universal IoT Gateway · OpenStreetMap
+      </footer>
+    </main>
   );
 }
 
