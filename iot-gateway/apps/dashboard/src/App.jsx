@@ -26,7 +26,7 @@ import {
 import 'leaflet/dist/leaflet.css';
 import './App.css';
 
-const API_URL = import.meta.env.VITE_GATEWAY_URL?.replace(/\/+$/, '') || '';
+const API_URL = import.meta.env.GATEWAY_URL?.replace(/\/+$/, '') || '';
 const MAX_EVENTS = 500;
 
 const markerIcon = L.divIcon({
