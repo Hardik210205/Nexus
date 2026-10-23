@@ -1,7 +1,7 @@
 # Nexus — Network Exchange for Unified Systems
 
 Nexus is a telemetry application with an Arduino/MPU6050 sensor, GPS receiver,
-Python USB-serial bridge, Node.js gateway, SQLite event history, and React
+Python USB-serial bridge, Node.js gateway, PostgreSQL event history, and React
 dashboard. The current bridge-to-gateway telemetry path uses NSP/1 over
 TLS 1.3 with mutual certificate authentication. The UNO keeps its local
 serial link; the certificate identity is held by the bridge host.
@@ -23,7 +23,7 @@ routes return `410`. See [the current-state audit](docs/architecture/current-sta
 | Arduino motion/GPS sensing, serial CSV | Implemented; board/toolchain are not pinned |
 | Python serial-to-NSP bridge | Implemented; bounded in-memory retry, no durable queue |
 | NSP/1 TCP with TLS 1.3/mTLS | Implemented for one configured bridge identity |
-| SQLite persistence and Socket.IO | Implemented; authenticated NSP ingestion, local dashboard APIs |
+| PostgreSQL persistence and Socket.IO | Implemented for production; SQLite fallback for local development |
 | React operations, history, map, and status views | Implemented |
 | NSP/1 protocol specification | Implemented local runtime profile; production extensions remain |
 | C++17 frame/stream codec and CMake tests | Implemented as a separate codec library |
@@ -72,7 +72,7 @@ secure deployment, MQTT/CoAP support, or production readiness.
 Nexus is an **Adaptive Road Hazard Beacon (ARHB)** telemetry application.
 Arduino motion/GPS records pass over USB serial to a Python bridge; the bridge
 uses NSP/1 over TLS 1.3/mTLS to send authenticated events to the Node.js
-gateway, which stores them in SQLite and publishes them to the local React
+gateway, which stores them in PostgreSQL in production and publishes them to the local React
 dashboard over Socket.IO.
 
 This document describes the implementation present in this repository. The
@@ -115,9 +115,98 @@ current implementation reference.
           │        └─ Socket.IO → React dashboard (Vite)
 ```
 
-The gateway is the persistence and fan-out boundary. The bridge handles the
+The gateway is the persistence and fan-out boundary. PostgreSQL is the
+production database; SQLite remains an automatic local-development fallback
+when `DATABASE_URL` is not set. The bridge handles the
 hardware-facing serial format; the dashboard consumes gateway HTTP and
 Socket.IO interfaces rather than reading serial data directly.
+
+## Quick start on Windows
+
+Run the gateway, dashboard, and serial bridge in three separate PowerShell
+terminals. Start them in this order so the gateway is ready before the bridge
+connects:
+
+### 1. Install prerequisites
+
+- Node.js `22.13.0` or newer
+- Python 3
+- Arduino IDE, if uploading the firmware
+- Arduino Uno with the MPU6050 and GPS receiver connected
+
+From the repository root (`D:\IoT_Project`), install dependencies:
+
+```powershell
+python -m pip install -r requirements.txt
+
+cd D:\IoT_Project\iot-gateway\apps\gateway-core
+npm install
+
+cd D:\IoT_Project\iot-gateway\apps\dashboard
+npm install
+```
+
+### 2. Create local development certificates
+
+Run this once from the repository root. The generated files are stored under
+`.local\nsp-certs\`, which is ignored by Git:
+
+```powershell
+cd D:\IoT_Project
+python scripts\generate_nsp_dev_certs.py
+```
+
+### 3. Start the gateway
+
+```powershell
+cd D:\IoT_Project\iot-gateway\apps\gateway-core
+$env:NEXUS_NSP_PROFILE = "development"
+npm start
+```
+
+The gateway starts the dashboard API on `http://127.0.0.1:3000` and the
+authenticated NSP listener on `127.0.0.1:3443`.
+
+### 4. Start the dashboard
+
+```powershell
+cd D:\IoT_Project\iot-gateway\apps\dashboard
+npm run dev
+```
+
+Open the URL printed by Vite, normally
+`http://localhost:5173`. The dashboard receives new events through Socket.IO
+and also periodically refreshes event history and GPS status from the
+gateway, so a browser refresh is not required.
+
+### 5. Start the serial bridge
+
+Close Arduino Serial Monitor first because the bridge must exclusively own the
+Arduino COM port. Replace `COM3` with the actual port when necessary:
+
+```powershell
+cd D:\IoT_Project
+$env:NEXUS_NSP_PROFILE = "development"
+$env:NEXUS_SERIAL_PORT = "COM3"
+python serial_bridge.py
+```
+
+When the bridge is connected, the dashboard **System status** page reports the
+GPS receiver state:
+
+- `FIX` — valid GPS coordinates are available.
+- `NO FIX` — GPS data is arriving, but a usable fix is not available yet.
+- `NO DATA` — no recent NMEA data was received.
+- `STALE` — the last bridge heartbeat is older than the dashboard timeout.
+
+The map displays coordinates only for motion events recorded while a valid GPS
+fix exists. It does not continuously track the receiver.
+
+### Stop the services
+
+Press `Ctrl+C` in each terminal. The gateway stores events in
+`iot-gateway\apps\gateway-core\arhb_events.db`; do not delete this file if
+event history must be retained.
 
 ## Components
 
@@ -215,7 +304,7 @@ HTTP/Socket.IO server binds to loopback port `3000`. It provides:
 | --- | --- |
 | `POST /api/telemetry` | Rejected with HTTP `410`; event ingestion must use authenticated NSP |
 | `GET /api/events` | Return stored events, newest first |
-| `GET /api/health` | Check SQLite and NSP listener; reports degraded state if either is unavailable |
+| `GET /api/health` | Check the configured database and NSP listener; reports degraded state if either is unavailable |
 | `GET /api/gps-status` | Return the latest bridge GPS/sensor heartbeat and receive time |
 | `POST /api/gps-status` | Rejected with HTTP `410`; device status must use authenticated NSP |
 
@@ -224,9 +313,11 @@ certificate, and the configured certificate URI identity. It validates
 registered message types and payloads. HTTP event/status writes cannot bypass
 NSP. Telemetry and the device-scoped event-ID deduplication record are
 committed together before ACK or Socket.IO broadcast. The database is opened at
-`iot-gateway/apps/gateway-core/arhb_events.db`; the gateway enables SQLite
-write-ahead logging and applies additive protocol/NSP event-ID migrations
-without discarding existing rows.
+In production, the gateway uses PostgreSQL and creates its schema and indexes
+on startup. Local development and tests use
+`iot-gateway/apps/gateway-core/arhb_events.db` when `DATABASE_URL` is absent;
+the gateway enables SQLite write-ahead logging and applies additive
+protocol/NSP event-ID migrations without discarding existing rows.
 
 The stored table contains:
 
@@ -250,7 +341,7 @@ database errors result in HTTP `500`. Accepted events are broadcast to all
 connected Socket.IO clients using the `telemetry_update` event. The gateway
 does not currently filter subscribers by device.
 
-The health endpoint runs `SELECT 1` against SQLite and includes a `checkedAt`
+The health endpoint runs `SELECT 1` against the configured database and includes a `checkedAt`
 timestamp. A successful check returns HTTP `200` with `status: "ok"` and
 `database: "connected"`; a failed database check is logged and returns HTTP
 `503` with `status: "degraded"` and `database: "unavailable"`. This is a
@@ -410,7 +501,7 @@ python -m pip install -r requirements.txt
 Create local development-only certificates before starting the gateway:
 
 ```powershell
-cd D:\Nexus
+cd D:\IoT_Project
 python scripts\generate_nsp_dev_certs.py
 ```
 
@@ -423,10 +514,10 @@ requires operator-provisioned CA-issued certificates.
 Install each JavaScript application's dependencies:
 
 ```powershell
-cd D:\Nexus\iot-gateway\apps\gateway-core
+cd D:\IoT_Project\iot-gateway\apps\gateway-core
 npm install
 
-cd D:\Nexus\iot-gateway\apps\dashboard
+cd D:\IoT_Project\iot-gateway\apps\dashboard
 npm install
 ```
 
@@ -437,7 +528,7 @@ the GPS SoftwareSerial connection, Arduino RX is pin 4 and Arduino TX is pin
 
 The GPS parser is included in the `.ino` file, so the sketch has no extra
 local header dependencies. In Arduino IDE, open the repository sketch directly
-from `D:\Nexus\arduino_edge_node\arduino_edge_node.ino`.
+from `D:\IoT_Project\arduino_edge_node\arduino_edge_node.ino`.
 
 The gateway listens on port `3000` by default. To use another port, set
 `PORT` in the gateway terminal before starting it. The NSP listener uses port
@@ -449,25 +540,68 @@ production server certificate valid for the DNS name the bridge uses, set
 `NEXUS_NSP_HOST` and `NEXUS_NSP_ALLOW_REMOTE=1`, provision the client
 certificate out of band, and configure host/firewall controls.
 
+For production, set `DATABASE_URL` to a PostgreSQL connection string. The
+gateway creates its required tables and indexes on startup. Set
+`DATABASE_SSL=require` when the PostgreSQL provider requires TLS. If
+`DATABASE_URL` is not set, the gateway uses the local SQLite database for
+development and tests.
+
+The gateway loads environment variables from
+`iot-gateway/apps/gateway-core/.env`. Create that file beside the gateway
+`package.json` for local development:
+
+```dotenv
+NEXUS_NSP_PROFILE=development
+DATABASE_URL=postgresql://user:password@localhost:5432/nexus
+DATABASE_SSL=disable
+NEXUS_SERIAL_PORT=COM3
+```
+
+Do not commit `.env`; it is for local secrets only. For hosted deployment,
+configure the same values in the platform's secret/environment-variable
+settings instead of uploading the file.
+
+The Vite dashboard uses a separate file,
+`iot-gateway/apps/dashboard/.env.local`, for browser-safe values:
+
+```dotenv
+VITE_GATEWAY_URL=http://127.0.0.1:3000
+```
+
+Never put database passwords, private keys, or client certificates in the
+dashboard `.env.local` file because `VITE_*` values are exposed to the browser.
+
+To copy existing local SQLite history into PostgreSQL before switching the
+gateway, set both variables and run:
+
+```powershell
+cd D:\IoT_Project\iot-gateway\apps\gateway-core
+$env:NEXUS_DB_PATH = "D:\IoT_Project\iot-gateway\apps\gateway-core\arhb_events.db"
+$env:DATABASE_URL = "postgresql://user:password@host:5432/nexus"
+$env:DATABASE_SSL = "require"
+npm run migrate:postgres
+```
+
+Use a secret-managed connection string instead of putting a real password in
+PowerShell history for shared or production environments.
+
 Run the gateway, dashboard, and bridge in three separate PowerShell
 terminals. Do not append the activation or execution-policy commands to
 `npm start`; the gateway does not need the Python virtual environment:
 
 ```powershell
-cd D:\Nexus\iot-gateway\apps\gateway-core
+cd D:\IoT_Project\iot-gateway\apps\gateway-core
 $env:NEXUS_NSP_PROFILE = "development"
 npm start
 ```
 
 ```powershell
-cd D:\Nexus\iot-gateway\apps\dashboard
+cd D:\IoT_Project\iot-gateway\apps\dashboard
 npm run dev
 ```
 
 ```powershell
-cd D:\Nexus
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-& D:\Nexus\.venv\Scripts\Activate.ps1
+cd D:\IoT_Project
 $env:NEXUS_NSP_PROFILE = "development"
 $env:NEXUS_SERIAL_PORT = "COM3" # replace with the Arduino COM port
 python serial_bridge.py
@@ -492,7 +626,7 @@ TLS 1.3/mTLS, negotiates NSP, submits and retries an event, and rejects a
 client without a certificate:
 
 ```powershell
-cd D:\Nexus\iot-gateway\apps\gateway-core
+cd D:\IoT_Project\iot-gateway\apps\gateway-core
 npm test
 ```
 
@@ -520,6 +654,61 @@ python -m unittest discover -s tests -v
 
 ## Configuration and operational constraints
 
+## VPS deployment with the existing NSP/TCP protocol
+
+The current protocol can be deployed without changing the Python bridge by
+running the gateway on a Linux VPS with Docker. The VPS must expose:
+
+- TCP `3443` for the TLS 1.3/mTLS NSP listener.
+- HTTP `3000` only locally; expose it publicly through HTTPS using a reverse
+  proxy such as Caddy or Nginx.
+
+Use a managed PostgreSQL provider for `DATABASE_URL`. Do not use the
+development certificates generated by `scripts\generate_nsp_dev_certs.py` in
+production. Provision a DNS-valid server certificate and a client certificate
+for the bridge.
+
+Build and run the gateway on the VPS:
+
+```bash
+cd /opt/nexus/iot-gateway/apps/gateway-core
+docker build -t nexus-gateway .
+docker run -d --name nexus-gateway --restart unless-stopped \
+  -p 3000:3000 -p 3443:3443 \
+  --env-file /etc/nexus/gateway.env \
+  -v /etc/nexus/certs:/run/nexus/certs:ro \
+  nexus-gateway
+```
+
+The production environment file should contain values similar to:
+
+```dotenv
+NODE_ENV=production
+PORT=3000
+HTTP_HOST=0.0.0.0
+HTTP_ALLOW_REMOTE=1
+NEXUS_NSP_PROFILE=production
+NEXUS_NSP_HOST=0.0.0.0
+NEXUS_NSP_PORT=3443
+NEXUS_NSP_ALLOW_REMOTE=1
+DATABASE_URL=postgresql://user:password@managed-postgres-host:5432/nexus
+DATABASE_SSL=require
+DASHBOARD_ORIGINS=https://your-dashboard.vercel.app
+NEXUS_NSP_SERVER_CERT=/run/nexus/certs/server-cert.pem
+NEXUS_NSP_SERVER_KEY=/run/nexus/certs/server-key.pem
+NEXUS_NSP_CLIENT_CA=/run/nexus/certs/ca-cert.pem
+```
+
+Restrict VPS firewall access to TCP `3443` from the bridge network where
+possible. Put the HTTP gateway behind HTTPS and set the Vercel dashboard
+`VITE_GATEWAY_URL` to that HTTPS URL. The bridge's NSP endpoint must use the
+VPS DNS name and port `3443`.
+
+For Vercel, set the project root to `iot-gateway/apps/dashboard`, build with
+`npm run build`, publish `dist`, and define
+`VITE_GATEWAY_URL=https://gateway.example.com`. Add the final Vercel domain
+to `DASHBOARD_ORIGINS` on the VPS and restart the gateway after changing it.
+
 The current deployment settings are:
 
 | Setting | Current value/location |
@@ -531,7 +720,9 @@ The current deployment settings are:
 | NSP device identity | `NEXUS_NSP_DEVICE_ID`; defaults to `arhb_uno_1` |
 | NSP certificates | `NEXUS_NSP_CERT_DIR` or `NEXUS_NSP_SERVER_CERT`, `NEXUS_NSP_SERVER_KEY`, `NEXUS_NSP_CLIENT_CA`, `NEXUS_NSP_CA`, `NEXUS_NSP_CLIENT_CERT`, and `NEXUS_NSP_CLIENT_KEY` |
 | Dashboard HTTP API | `HTTP_HOST` / `PORT`; defaults to `127.0.0.1:3000` |
-| Gateway SQLite file | `NEXUS_DB_PATH` environment variable; defaults to `arhb_events.db` beside `server.js` |
+| Production database | `DATABASE_URL` PostgreSQL connection string; required for hosted deployment |
+| Database TLS | `DATABASE_SSL=require` for providers requiring encrypted PostgreSQL connections |
+| Local database fallback | `NEXUS_DB_PATH`; used only when `DATABASE_URL` is not set |
 | Dashboard dev proxy target | `NEXUS_GATEWAY_URL`; defaults to `http://127.0.0.1:3000` |
 | Dashboard gateway URL | `VITE_GATEWAY_URL` build-time variable; unset means same-origin API |
 
@@ -553,7 +744,7 @@ management or internet-facing platform. In particular:
   certificate, `NEXUS_NSP_HOST`, `NEXUS_NSP_ALLOW_REMOTE=1`, out-of-band
   client provisioning, firewall rules, and monitoring.
 - The database has no configured retention or archival policy.
-- The health endpoint checks the gateway process and SQLite query only; there
+- The health endpoint checks the gateway process and database query only; there
   is no metrics or full readiness framework.
 - The dashboard depends on external OpenStreetMap tile and link services for
   geographic features.
@@ -573,7 +764,8 @@ protections.
 
 The repository's original design document discusses a broader protocol
 gateway. The current GPS/motion path uses serial CSV, NSP/TLS 1.3/mTLS,
-SQLite persistence, Socket.IO delivery, and a local dashboard. MQTT/CoAP
+PostgreSQL persistence in production, SQLite for local development, Socket.IO
+delivery, and a local dashboard. MQTT/CoAP
 adapters, dynamic device management, configurable rules, and production
 operations remain future work unless implemented in source.
 

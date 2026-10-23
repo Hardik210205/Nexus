@@ -58,7 +58,7 @@ h2 { font-size: 18px; letter-spacing: -.25px; line-height: 1.1; margin: 5px 0 0;
 .notice-error { background: #f4dcd8; color: var(--red); }
 .notice-action { background: transparent; border: 1px solid currentColor; color: inherit; cursor: pointer; margin-left: auto; padding: 6px 9px; }
 .notice-action:hover { background: rgba(163,67,58,.08); }
-.overview-strip { background: var(--paper); border: 1px solid var(--line); display: grid; grid-template-columns: 1.45fr repeat(4, 1fr); margin-bottom: 20px; }
+.overview-strip { background: var(--paper); border: 1px solid var(--line); display: grid; grid-template-columns: 1.35fr repeat(5, 1fr); margin-bottom: 20px; }
 .overview-strip > * { border-right: 1px solid var(--line); padding: 15px 18px; }
 .overview-strip > *:last-child { border-right: 0; }
 .overview-intro strong, .overview-intro span { display: block; }
@@ -71,6 +71,8 @@ h2 { font-size: 18px; letter-spacing: -.25px; line-height: 1.1; margin: 5px 0 0;
 .overview-value small { grid-column: 2; }
 .overview-value.warning svg, .overview-value.warning strong { color: var(--amber); }
 .overview-value.latest strong { font-size: 15px; }
+.overview-value.gps-overview.is-fixed svg, .overview-value.gps-overview.is-fixed strong { color: var(--green); }
+.overview-value.gps-overview.is-searching svg, .overview-value.gps-overview.is-searching strong { color: var(--amber); }
 .control-room { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
 .panel { background: var(--paper); border: 1px solid var(--line); }
 .map-panel { min-width: 0; padding: 20px; }

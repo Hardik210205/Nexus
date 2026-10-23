@@ -1,0 +1,6 @@
+.env
+.env.*
+node_modules
+arhb_events.db
+arhb_events.db-*
+npm-debug.log

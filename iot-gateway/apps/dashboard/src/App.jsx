@@ -94,7 +94,10 @@ function normalizeEvent(event) {
 }
 
 async function loadEventHistory() {
-  const response = await fetch(`${API_URL}/api/events?limit=${MAX_EVENTS}`);
+  const response = await fetch(`${API_URL}/api/events?limit=${MAX_EVENTS}`, {
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-cache' }
+  });
   if (!response.ok) {
     throw new Error(`The gateway returned HTTP ${response.status}.`);
   }
@@ -302,8 +305,10 @@ function App() {
   useEffect(() => {
     let active = true;
 
-    loadEventHistory()
-      .then((historyEvents) => {
+    const refreshHistory = (showLoadingState = false) => {
+      if (showLoadingState) setHistoryStatus('loading');
+      return loadEventHistory()
+        .then((historyEvents) => {
         if (!active) return;
         setEvents((previous) => {
           const merged = [...previous];
@@ -316,18 +321,25 @@ function App() {
         });
         setHistoryStatus('available');
       })
-      .catch((historyLoadError) => {
-        if (active) {
-          setHistoryStatus('unavailable');
-          const detail = historyLoadError instanceof TypeError
-            ? 'The gateway could not be reached.'
-            : historyLoadError.message;
-          setHistoryError(`Saved event history is unavailable. ${detail} Check the gateway and database status, then retry.`);
-        }
-      });
+        .catch((historyLoadError) => {
+          if (active) {
+            setHistoryStatus('unavailable');
+            const detail = historyLoadError instanceof TypeError
+              ? 'The gateway could not be reached.'
+              : historyLoadError.message;
+            setHistoryError(`Saved event history is unavailable. ${detail} Check the gateway and database status, then retry.`);
+          }
+        });
+    };
+
+    refreshHistory(true);
+    const interval = window.setInterval(() => {
+      refreshHistory();
+    }, 10000);
 
     return () => {
       active = false;
+      window.clearInterval(interval);
     };
   }, [historyRefreshKey]);
 
@@ -335,7 +347,10 @@ function App() {
     let active = true;
     const checkHealth = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/health`);
+        const response = await fetch(`${API_URL}/api/health`, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        });
         if (!response.ok && response.status !== 503) {
           if (!active) return;
           setHealthCheckedAt(new Date().toISOString());
@@ -415,7 +430,10 @@ function App() {
       }
     };
 
-    fetch(`${API_URL}/api/gps-status`)
+    const refreshGpsStatus = () => fetch(`${API_URL}/api/gps-status`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
@@ -433,6 +451,8 @@ function App() {
           });
         }
       });
+    refreshGpsStatus();
+    const gpsInterval = window.setInterval(refreshGpsStatus, 5000);
 
     socket.on('connect', () => {
       if (active) {
@@ -463,6 +483,7 @@ function App() {
     });
     return () => {
       active = false;
+      window.clearInterval(gpsInterval);
       socket.disconnect();
     };
   }, []);
@@ -606,7 +627,7 @@ function App() {
             <div className="overview-intro"><span className="section-kicker">FIELD OVERVIEW</span><strong>Roadside telemetry</strong><span>{historyStatus === 'loading' ? 'Loading saved event history…' : historyStatus === 'available' ? 'Saved history loaded; live events update automatically.' : 'Saved history unavailable; live events may still arrive.'}</span></div>
             <div className="overview-value"><Activity size={16} /><span>LOADED</span><strong>{normalizedEvents.length}</strong><small>recent events</small></div>
             <div className="overview-value"><MapPin size={16} /><span>POSITIONED</span><strong>{mappedEvents.length}</strong><small>with GPS</small></div>
-            <div className="overview-value warning"><CircleHelp size={16} /><span>UNPOSITIONED</span><strong>{gpsMissingCount}</strong><small>without GPS</small></div>
+            <div className={`overview-value gps-overview ${gpsStatus.status === 'FIX' && !gpsStatusIsStale ? 'is-fixed' : 'is-searching'}`} title={gpsStatusDetail}><Satellite size={16} /><span>GPS RECEIVER</span><strong>{gpsStatus.status === 'FIX' && !gpsStatusIsStale ? 'FIX' : gpsStatus.status === 'NO_FIX' ? 'NO FIX' : gpsStatus.status === 'NO_DATA' ? 'NO DATA' : gpsStatusIsStale ? 'STALE' : 'WAITING'}</strong><small>{gpsStatus.satellites} satellites</small></div>
             <div className="overview-value latest"><Clock3 size={16} /><span>LATEST EVENT</span><strong>{formatValue(latestEvent?.eventNumber ? `#${latestEvent.eventNumber}` : '—')}</strong><small>{latestEvent ? formatTimestamp(latestEvent.timestamp) : 'No events yet'}</small></div>
           </section>
           <main className="overview-grid">

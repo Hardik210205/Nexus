@@ -42,6 +42,34 @@ loopback NSP TLS `127.0.0.1:3443` for the bridge. Remote bridge connections
 require a DNS-valid production server certificate, separately provisioned
 client credentials, a configured non-loopback `NEXUS_NSP_HOST`, and
 `NEXUS_NSP_ALLOW_REMOTE=1`. Do not expose the dashboard HTTP server.
+
+For hosted deployments, set `DATABASE_URL` to a managed PostgreSQL instance
+and set `DATABASE_SSL=require` when required by the provider. The gateway
+creates the PostgreSQL schema on startup. When `DATABASE_URL` is absent, it
+uses the local SQLite file for development and tests.
+
+## Linux VPS deployment with Docker
+
+The existing NSP/TCP protocol requires a host that exposes a raw TCP port.
+The gateway image is defined in
+`iot-gateway/apps/gateway-core/Dockerfile`. Build it on a Linux VPS and
+publish HTTP port `3000` and NSP/TLS port `3443`:
+
+```bash
+cd /opt/nexus/iot-gateway/apps/gateway-core
+docker build -t nexus-gateway .
+docker run -d --name nexus-gateway --restart unless-stopped \
+  -p 3000:3000 -p 3443:3443 \
+  --env-file /etc/nexus/gateway.env \
+  -v /etc/nexus/certs:/run/nexus/certs:ro \
+  nexus-gateway
+```
+
+Set `HTTP_ALLOW_REMOTE=1`, `NEXUS_NSP_ALLOW_REMOTE=1`, and
+`DASHBOARD_ORIGINS` in the environment file. Use production certificates
+mounted under `/run/nexus/certs`; never use the development CA for a public
+deployment. Place the HTTP endpoint behind a reverse proxy with HTTPS and
+keep raw TCP `3443` available for the bridge.
 Certificates can be supplied through `NEXUS_NSP_CERT_DIR` or the explicit
 `NEXUS_NSP_SERVER_CERT`, `NEXUS_NSP_SERVER_KEY`, `NEXUS_NSP_CLIENT_CA`,
 `NEXUS_NSP_CA`, `NEXUS_NSP_CLIENT_CERT`, and `NEXUS_NSP_CLIENT_KEY` variables.
