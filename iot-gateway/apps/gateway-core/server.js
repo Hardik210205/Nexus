@@ -64,6 +64,7 @@ const nspCertificateDirectory = process.env.NEXUS_NSP_CERT_DIR
 const nspPort = Number(process.env.NEXUS_NSP_PORT || 3443);
 const nspHost = process.env.NEXUS_NSP_HOST || '127.0.0.1';
 const httpHost = process.env.HTTP_HOST || '127.0.0.1';
+const nspEnabled = process.env.NEXUS_NSP_ENABLED !== '0';
 let latestGpsStatus = {
     status: 'unknown',
     satellites: 0,
@@ -117,11 +118,13 @@ app.get('/api/events', (req, res) => {
 // Report database health only after a query succeeds.
 app.get('/api/health', (req, res) => {
     const checkedAt = new Date().toISOString();
-    const nspStatus = nspServer.listening ? 'listening' : 'unavailable';
+    const nspStatus = !nspEnabled
+        ? 'disabled'
+        : nspServer.listening ? 'listening' : 'unavailable';
 
     database.healthCheck().then(() => {
         const databaseStatus = 'connected';
-        const status = nspStatus === 'listening' ? 'ok' : 'degraded';
+        const status = nspStatus === 'listening' || nspStatus === 'disabled' ? 'ok' : 'degraded';
         res.json({
             status,
             database: databaseStatus,
@@ -143,19 +146,19 @@ const PORT = Number(process.env.PORT || 3000);
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
     throw new Error('PORT must be an integer between 1 and 65535');
 }
-if (!Number.isInteger(nspPort) || nspPort < 1 || nspPort > 65535 || nspPort === PORT) {
+if (nspEnabled && (!Number.isInteger(nspPort) || nspPort < 1 || nspPort > 65535 || nspPort === PORT)) {
     throw new Error('NEXUS_NSP_PORT must be a valid port different from PORT');
 }
 if (!['127.0.0.1', '::1', 'localhost'].includes(httpHost) &&
     process.env.HTTP_ALLOW_REMOTE !== '1') {
     throw new Error('Set HTTP_ALLOW_REMOTE=1 only when exposing the dashboard API through HTTPS and firewall controls');
 }
-if (!['127.0.0.1', '::1', 'localhost'].includes(nspHost) &&
+if (nspEnabled && !['127.0.0.1', '::1', 'localhost'].includes(nspHost) &&
     process.env.NEXUS_NSP_ALLOW_REMOTE !== '1') {
     throw new Error('Set NEXUS_NSP_ALLOW_REMOTE=1 only when exposing the mTLS-only NSP listener');
 }
 
-const nspServer = createNspServer({
+const nspServer = nspEnabled ? createNspServer({
     certificate: process.env.NEXUS_NSP_SERVER_CERT ||
         (nspCertificateDirectory && path.join(nspCertificateDirectory, 'server-cert.pem')),
     privateKey: process.env.NEXUS_NSP_SERVER_KEY ||
@@ -210,7 +213,7 @@ const nspServer = createNspServer({
         );
         io.emit('gps_status_update', latestGpsStatus);
     }
-});
+}) : null;
 
 database.initialize().then(async () => {
     const savedGpsStatus = await database.getGpsStatus();
@@ -220,22 +223,28 @@ database.initialize().then(async () => {
         console.log(`Database driver: ${database.mode}`);
         console.log(`Event history endpoint: http://localhost:${PORT}/api/events`);
     });
-    nspServer.listen(nspPort, nspHost, () => {
-        console.log(`NSP TLS 1.3/mTLS listener on ${nspHost}:${nspPort} (ALPN nsp/1)`);
-    });
+    if (nspServer) {
+        nspServer.listen(nspPort, nspHost, () => {
+            console.log(`NSP TLS 1.3/mTLS listener on ${nspHost}:${nspPort} (ALPN nsp/1)`);
+        });
+    } else {
+        console.warn('[NSP] Listener disabled; HTTP dashboard/API mode only');
+    }
 }).catch((error) => {
     console.error(`[DATABASE] Initialization failed: ${error.message}`);
     process.exitCode = 1;
 });
 
-nspServer.on('error', (error) => {
-    console.error(`[NSP] Listener failed: ${error.message}`);
-    process.exitCode = 1;
-    server.close();
-});
+if (nspServer) {
+    nspServer.on('error', (error) => {
+        console.error(`[NSP] Listener failed: ${error.message}`);
+        process.exitCode = 1;
+        server.close();
+    });
+}
 
 process.on('SIGTERM', () => {
     server.close();
-    nspServer.close();
+    if (nspServer) nspServer.close();
     database.close().catch((error) => console.error(`[DATABASE] Shutdown failed: ${error.message}`));
 });

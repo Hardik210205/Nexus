@@ -688,6 +688,7 @@ PORT=3000
 HTTP_HOST=0.0.0.0
 HTTP_ALLOW_REMOTE=1
 NEXUS_NSP_PROFILE=production
+NEXUS_NSP_ENABLED=1
 NEXUS_NSP_HOST=0.0.0.0
 NEXUS_NSP_PORT=3443
 NEXUS_NSP_ALLOW_REMOTE=1
@@ -708,6 +709,11 @@ For Vercel, set the project root to `iot-gateway/apps/dashboard`, build with
 `npm run build`, publish `dist`, and define
 `VITE_GATEWAY_URL=https://gateway.example.com`. Add the final Vercel domain
 to `DASHBOARD_ORIGINS` on the VPS and restart the gateway after changing it.
+
+For a normal Render HTTP Web Service without a public raw TCP endpoint, set
+`NEXUS_NSP_ENABLED=0`. The HTTP API and dashboard can run in this mode, but
+the current NSP bridge cannot send telemetry until a TCP-capable endpoint or
+an HTTPS/WSS ingestion transport is provided.
 
 The current deployment settings are:
 
@@ -755,6 +761,9 @@ See the [usability test plan](docs/USABILITY_TEST_PLAN.md) for concrete
 operator workflows, current capability boundaries, and test results. Workflows
 marked `NOT RUN` require manual execution; their expected results are not
 evidence of a pass.
+
+For the Render and Vercel deployment procedure, see the
+[Render + Vercel deployment guide](docs/deployment-render-vercel.md).
 
 Do not expose this prototype directly to the public internet without adding
 appropriate access controls, transport security, validation, and operational
