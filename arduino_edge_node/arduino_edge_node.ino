@@ -217,7 +217,14 @@ bool readMpuRegisters(uint8_t reg, uint8_t count, uint8_t *buffer) {
 
 bool initializeMpu() {
   uint8_t identity = 0;
-  if (!readMpuRegisters(0x75, 1, &identity) || identity != 0x68) return false;
+  // BEFORE
+if (!readMpuRegisters(0x75, 1, &identity) || identity != 0x68) return false;
+
+// AFTER — accepts genuine + clone chips
+if (!readMpuRegisters(0x75, 1, &identity) ||
+    (identity != 0x68 && identity != 0x70 && identity != 0x98)) return false;
+
+
 
   if (!writeMpuRegister(0x6B, 0x00) ||
       !writeMpuRegister(0x1C, 0x00) ||
