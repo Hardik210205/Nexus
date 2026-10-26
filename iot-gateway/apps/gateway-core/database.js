@@ -15,6 +15,8 @@ class Database {
             this.pool = new Pool({
                 connectionString: process.env.DATABASE_URL,
                 max: Number(process.env.DATABASE_POOL_SIZE || 10),
+                connectionTimeoutMillis: 10000,
+                statement_timeout: 15000,
                 ssl: process.env.DATABASE_SSL === 'disable'
                     ? false
                     : process.env.DATABASE_SSL === 'require'
