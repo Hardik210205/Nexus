@@ -493,6 +493,21 @@ function App() {
     return () => window.clearInterval(interval);
   }, []);
 
+  // Keep-alive: ping the Render backend every 8 min to prevent free-tier spin-down.
+  // Render sleeps after 15 min of inactivity; 8 min gives a safe margin.
+  // Also fires immediately on mount so a cold-start begins as soon as the page loads.
+  useEffect(() => {
+    if (!API_URL) return; // no-op in local dev when API_URL is empty
+    const ping = () => {
+      fetch(`${API_URL}/api/health`, { cache: 'no-store' })
+        .then(() => console.log('[KEEP-ALIVE] Render backend pinged'))
+        .catch(() => console.warn('[KEEP-ALIVE] Ping failed — backend may be cold-starting'));
+    };
+    ping(); // immediate warm-up on page load
+    const keepAliveInterval = window.setInterval(ping, 8 * 60 * 1000); // every 8 minutes
+    return () => window.clearInterval(keepAliveInterval);
+  }, []);
+
   const normalizedEvents = useMemo(() => events.map(normalizeEvent), [events]);
   const mappedEvents = useMemo(() => normalizedEvents.filter(hasValidCoordinates), [normalizedEvents]);
   const eventTypes = useMemo(() => [...new Set(normalizedEvents.map((event) => event.eventType).filter(Boolean))], [normalizedEvents]);
