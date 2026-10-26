@@ -26,7 +26,7 @@ import {
 import 'leaflet/dist/leaflet.css';
 import './App.css';
 
-const API_URL = import.meta.env.GATEWAY_URL?.replace(/\/+$/, '') || '';
+const API_URL = import.meta.env.VITE_GATEWAY_URL?.replace(/\/+$/, '') || '';
 const MAX_EVENTS = 500;
 
 const markerIcon = L.divIcon({
@@ -649,7 +649,7 @@ function App() {
               <div className={`rail-status ${systemTone}`}><span className="status-pip" /><strong>{systemStatus}</strong></div>
               <dl className="telemetry-list">
                 <div><dt><Antenna size={14} /> Transport</dt><dd>Socket.IO</dd></div>
-                <div><dt><Database size={14} /> Persistence</dt><dd>SQLite</dd></div>
+                <div><dt><Database size={14} /> Persistence</dt><dd>PostgreSQL</dd></div>
                 <div><dt><Radio size={14} /> Source</dt><dd>{latestEvent?.deviceId || 'Not reported'}</dd></div>
                 <div><dt><Satellite size={14} /> GPS receiver</dt><dd title={gpsStatusDetail}>{gpsStatusIsStale ? 'Status stale' : gpsStatusLabel}</dd></div>
               </dl>
@@ -707,7 +707,7 @@ function App() {
             <div className="integration-row"><Radio size={18} /><div><strong>Live telemetry updates</strong><span>Socket.IO browser connection</span></div><b className={connected === true ? 'healthy' : connected === false ? 'unavailable' : 'waiting'}>{connected === true ? 'CONNECTED' : connected === false ? 'DISCONNECTED' : 'CONNECTING'}</b></div>
             <div className="integration-row"><Gauge size={18} /><div><strong>Motion sensor / bridge heartbeat</strong><span>{sensorStatusLabel}{gpsStatus.checkedAt ? `; last bridge update: ${formatTimestamp(gpsStatus.checkedAt)}.` : '. Start the bridge and confirm recurring Arduino status.'}</span></div><b className={sensorStatusIsReady ? 'healthy' : gpsStatus.sensorStatus === 'ERROR' && !gpsStatusIsStale ? 'unavailable' : 'waiting'}>{sensorStatusIsReady ? 'READY' : gpsStatus.sensorStatus === 'ERROR' && !gpsStatusIsStale ? 'ERROR' : gpsStatusIsStale ? 'STALE' : 'WAITING'}</b></div>
             <div className="integration-row"><Satellite size={18} /><div><strong>GPS receiver</strong><span>{gpsStatusIsStale ? 'Last status is more than 15 seconds old. ' : ''}{gpsStatusDetail}{gpsStatus.checkedAt ? ` Last update: ${formatTimestamp(gpsStatus.checkedAt)}.` : ''}</span></div><b className={gpsStatus.status === 'FIX' && !gpsStatusIsStale ? 'healthy' : gpsStatus.status === 'checking' ? 'waiting' : 'unavailable'}>{gpsStatusIsStale ? 'STALE' : gpsStatus.status === 'FIX' ? 'FIX' : gpsStatus.status === 'checking' ? 'CHECKING' : gpsStatus.status === 'NO_FIX' ? 'NO FIX' : gpsStatus.status === 'NO_DATA' ? 'NO DATA' : gpsStatus.status === 'unknown' ? 'WAITING' : 'UNAVAILABLE'}</b></div>
-            <div className="integration-row"><Database size={18} /><div><strong>Saved event history</strong><span>SQLite check: {databaseStatus}; history request: {historyStatus}</span></div><b className={historyStatus === 'available' ? 'healthy' : historyStatus === 'loading' ? 'waiting' : 'unavailable'}>{historyStatus}</b></div>
+            <div className="integration-row"><Database size={18} /><div><strong>Saved event history</strong><span>PostgreSQL check: {databaseStatus}; history request: {historyStatus}</span></div><b className={historyStatus === 'available' ? 'healthy' : historyStatus === 'loading' ? 'waiting' : 'unavailable'}>{historyStatus}</b></div>
             <div className="integration-row"><MapPin size={18} /><div><strong>Geographic layer</strong><span>Valid event coordinates are mapped. External map tile availability is not monitored.</span></div><b className="waiting">NOT CHECKED</b></div>
             {historyStatus !== 'loading' && (
               <button className="text-action" onClick={requestHistoryRefresh}><RefreshCw size={14} /> Refresh saved history</button>
