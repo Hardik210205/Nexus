@@ -628,10 +628,6 @@ function App() {
   };
   const handleDeleteEvent = async (event) => {
     if (!event?.id || deletingEventId) return;
-    const confirmed = window.confirm(
-      `Delete event ${event.eventNumber ? `#${event.eventNumber}` : event.id} permanently?`
-    );
-    if (!confirmed) return;
 
     setDeleteError('');
     setDeletingEventId(event.id);
