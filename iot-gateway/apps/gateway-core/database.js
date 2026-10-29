@@ -129,6 +129,45 @@ class Database {
         }));
     }
 
+    async deleteEvent(eventId) {
+        if (this.mode === 'postgres') {
+            const client = await this.pool.connect();
+            try {
+                await client.query('BEGIN');
+                await client.query(
+                    'DELETE FROM nsp_event_ids WHERE internal_id = $1',
+                    [eventId]
+                );
+                const result = await client.query(
+                    'DELETE FROM telemetry_events WHERE id = $1 RETURNING id',
+                    [eventId]
+                );
+                await client.query('COMMIT');
+                return result.rowCount > 0;
+            } catch (error) {
+                await client.query('ROLLBACK').catch(() => {});
+                throw error;
+            } finally {
+                client.release();
+            }
+        }
+
+        this.sqlite.exec('BEGIN IMMEDIATE');
+        try {
+            this.sqlite.prepare(
+                'DELETE FROM nsp_event_ids WHERE internal_id = ?'
+            ).run(eventId);
+            const result = this.sqlite.prepare(
+                'DELETE FROM telemetry_events WHERE id = ?'
+            ).run(eventId);
+            this.sqlite.exec('COMMIT');
+            return result.changes > 0;
+        } catch (error) {
+            this.sqlite.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
     async healthCheck() {
         if (this.mode === 'postgres') {
             await this.pool.query('SELECT 1');

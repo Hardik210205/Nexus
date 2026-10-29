@@ -88,7 +88,7 @@ MPU6050/GPS --> Arduino --USB serial CSV--> Python bridge
 ```
 
 1. Firmware samples MPU6050 acceleration and detects acceleration-change
-   magnitude at or above `0.60 g`, after a 3-second warm-up, with a 2-second
+   magnitude at or above `2.50 g`, after a 3-second warm-up, with a 5-second
    event cooldown. It verifies MPU identity and configuration readback before
    reporting the sensor ready. GPS fix state is not a prerequisite for event
    detection.

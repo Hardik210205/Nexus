@@ -223,8 +223,8 @@ consecutive acceleration samples:
 changeG = sqrt((ax - previousAx)² + (ay - previousAy)² + (az - previousAz)²)
 ```
 
-An event is emitted when `changeG` is at least `0.60 g`, after a 3-second
-sensor warm-up and no more frequently than once every 2 seconds. The loop
+An event is emitted when `changeG` is at least `2.50 g`, after a 3-second
+sensor warm-up and no more frequently than once every 5 seconds. The loop
 samples at approximately 10 ms intervals. Firmware verifies the MPU6050
 identity and configuration readback before reporting it ready; I2C samples
 are decoded as signed 16-bit values. These are source constants, not

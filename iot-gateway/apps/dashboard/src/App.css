@@ -192,6 +192,28 @@ h2 { font-size: 18px; letter-spacing: -.25px; line-height: 1.1; margin: 5px 0 0;
   text-decoration: underline;
 }
 
+.delete-event-btn {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--red);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 5px;
+  padding: 5px 8px;
+}
+
+.delete-event-btn:hover:not(:disabled) {
+  background: rgba(163, 67, 58, 0.08);
+  border-color: var(--red);
+}
+
+.delete-event-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .single-page,
 .events-page,
 .system-page {

@@ -140,8 +140,11 @@ bool hasGpsFix(const GpsState &state, unsigned long now,
          (state.latitude != 0 || state.longitude != 0);
 }
 
-const float IMPACT_THRESHOLD_G = 0.60;
-const unsigned long COOLDOWN_MS = 2000;
+// Road hazard detection: 2.50g ignores handling noise, engine vibration,
+// and light bumps; only clear impacts (potholes, hard jolts) emit events.
+// Cooldown prevents duplicate events from a single sustained impact.
+const float IMPACT_THRESHOLD_G = 2.50;
+const unsigned long COOLDOWN_MS = 5000;
 const unsigned long SENSOR_WARMUP_MS = 3000;
 
 bool shouldEmitMotionEvent(float changeG, unsigned long now,

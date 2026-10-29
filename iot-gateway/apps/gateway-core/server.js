@@ -115,6 +115,28 @@ app.get('/api/events', (req, res) => {
         });
 });
 
+app.delete('/api/events/:id', (req, res) => {
+    const eventId = String(req.params.id || '').trim();
+    if (!eventId) {
+        res.status(400).json({ error: 'Event id is required' });
+        return;
+    }
+
+    database.deleteEvent(eventId)
+        .then((deleted) => {
+            if (!deleted) {
+                res.status(404).json({ error: 'Event not found' });
+                return;
+            }
+            io.emit('telemetry_deleted', { id: eventId });
+            res.json({ deleted: true, id: eventId });
+        })
+        .catch((error) => {
+            console.error('[DATABASE] Failed to delete event:', error);
+            res.status(500).json({ error: 'Failed to delete event' });
+        });
+});
+
 // Report database health only after a query succeeds.
 app.get('/api/health', (req, res) => {
     const checkedAt = new Date().toISOString();

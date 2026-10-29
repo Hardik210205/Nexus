@@ -18,11 +18,11 @@ int main() {
   assert(decodeMpuAxisSample(0x80, 0x00) == -32768);
   assert(decodeMpuAxisSample(0xFF, 0xFF) == -1);
 
-  assert(!shouldEmitMotionEvent(0.60f, 2999, 0, 0));
-  assert(!shouldEmitMotionEvent(0.59f, 3000, 0, 0));
-  assert(shouldEmitMotionEvent(0.60f, 3000, 0, 0));
-  assert(!shouldEmitMotionEvent(0.60f, 5999, 0, 4000));
-  assert(shouldEmitMotionEvent(0.60f, 6000, 0, 4000));
+  assert(!shouldEmitMotionEvent(2.50f, 2999, 0, 0));
+  assert(!shouldEmitMotionEvent(2.49f, 3000, 0, 0));
+  assert(shouldEmitMotionEvent(2.50f, 3000, 0, 0));
+  assert(!shouldEmitMotionEvent(2.50f, 8999, 0, 4000));
+  assert(shouldEmitMotionEvent(2.50f, 9000, 0, 4000));
 
   GpsState standard;
   assert(parse("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47",

@@ -20,6 +20,7 @@ import {
   Satellite,
   Settings,
   Signal,
+  Trash2,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -108,6 +109,21 @@ async function loadEventHistory() {
     throw new Error('The gateway returned an invalid event-history response.');
   }
   return rows.map(normalizeEvent);
+}
+
+async function deleteEventById(eventId) {
+  const response = await fetch(`${API_URL}/api/events/${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+    headers: { 'Cache-Control': 'no-cache' }
+  });
+  if (response.status === 404) {
+    throw new Error('That event was already deleted.');
+  }
+  if (!response.ok) {
+    throw new Error(`The gateway returned HTTP ${response.status}.`);
+  }
+  return response.json();
 }
 
 function hasValidCoordinates(event) {
@@ -221,7 +237,17 @@ function EventStream({ events, newEventId, limit, emptyMessage, onCheckStatus })
   );
 }
 
-function HistoryTable({ events, filter, setFilter, typeFilter, setTypeFilter, eventTypes, emptyMessage }) {
+function HistoryTable({
+  events,
+  filter,
+  setFilter,
+  typeFilter,
+  setTypeFilter,
+  eventTypes,
+  emptyMessage,
+  onDeleteEvent,
+  deletingEventId,
+}) {
   return (
     <section className="history-panel panel">
       <div className="panel-heading history-heading">
@@ -251,7 +277,7 @@ function HistoryTable({ events, filter, setFilter, typeFilter, setTypeFilter, ev
       <div className="table-container">
         <table>
           <caption className="sr-only">Recorded telemetry event history</caption>
-          <thead><tr><th>Event</th><th>Type</th><th>Received</th><th>Coordinates</th><th>Satellites</th><th>Source</th><th>Map</th></tr></thead>
+          <thead><tr><th>Event</th><th>Type</th><th>Received</th><th>Coordinates</th><th>Satellites</th><th>Source</th><th>Map</th><th>Actions</th></tr></thead>
           <tbody>
             {events.map((event) => (
               <tr key={`history-${eventKey(event)}`}>
@@ -268,9 +294,21 @@ function HistoryTable({ events, filter, setFilter, typeFilter, setTypeFilter, ev
                     Open <ArrowUpRight size={13} />
                   </a>
                 ) : <span className="muted-label">Not mapped</span>}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="delete-event-btn"
+                    disabled={!event.id || deletingEventId === event.id}
+                    onClick={() => onDeleteEvent(event)}
+                    aria-label={`Delete event ${formatValue(event.eventNumber)}`}
+                  >
+                    <Trash2 size={13} />
+                    {deletingEventId === event.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </td>
               </tr>
             ))}
-            {!events.length && <tr><td colSpan="7" className="empty-state">{emptyMessage}</td></tr>}
+            {!events.length && <tr><td colSpan="8" className="empty-state">{emptyMessage}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -299,6 +337,8 @@ function App() {
   const [filter, setFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [newEventId, setNewEventId] = useState('');
+  const [deletingEventId, setDeletingEventId] = useState('');
+  const [deleteError, setDeleteError] = useState('');
   const [healthRefreshKey, setHealthRefreshKey] = useState(0);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
@@ -481,6 +521,10 @@ function App() {
       setNewEventId(eventKey(nextEvent));
       window.setTimeout(() => setNewEventId(''), 2400);
     });
+    socket.on('telemetry_deleted', (payload) => {
+      if (!active || !payload?.id) return;
+      setEvents((previous) => previous.filter((event) => String(event.id) !== String(payload.id)));
+    });
     return () => {
       active = false;
       window.clearInterval(gpsInterval);
@@ -582,6 +626,27 @@ function App() {
     setHistoryError('');
     setHistoryRefreshKey((value) => value + 1);
   };
+  const handleDeleteEvent = async (event) => {
+    if (!event?.id || deletingEventId) return;
+    const confirmed = window.confirm(
+      `Delete event ${event.eventNumber ? `#${event.eventNumber}` : event.id} permanently?`
+    );
+    if (!confirmed) return;
+
+    setDeleteError('');
+    setDeletingEventId(event.id);
+    try {
+      await deleteEventById(event.id);
+      setEvents((previous) => previous.filter((row) => String(row.id) !== String(event.id)));
+    } catch (error) {
+      const detail = error instanceof TypeError
+        ? 'The gateway could not be reached.'
+        : error.message;
+      setDeleteError(`Could not delete the event. ${detail}`);
+    } finally {
+      setDeletingEventId('');
+    }
+  };
   const requestHealthRefresh = () => {
     setGatewayHealth('checking');
     setHealthRefreshKey((value) => value + 1);
@@ -633,6 +698,14 @@ function App() {
           <AlertTriangle size={16} />
           <span>{historyError}</span>
           <button className="notice-action" onClick={requestHistoryRefresh}>Retry history</button>
+        </div>
+      )}
+
+      {deleteError && (
+        <div className="notice notice-error" role="alert">
+          <AlertTriangle size={16} />
+          <span>{deleteError}</span>
+          <button className="notice-action" onClick={() => setDeleteError('')}>Dismiss</button>
         </div>
       )}
 
@@ -690,7 +763,17 @@ function App() {
               onCheckStatus={normalizedEvents.length ? null : () => setPage('system')}
             />
           </section>
-          <HistoryTable events={filteredEvents} filter={filter} setFilter={setFilter} typeFilter={typeFilter} setTypeFilter={setTypeFilter} eventTypes={eventTypes} emptyMessage={historyEmptyMessage} />
+          <HistoryTable
+            events={filteredEvents}
+            filter={filter}
+            setFilter={setFilter}
+            typeFilter={typeFilter}
+            setTypeFilter={setTypeFilter}
+            eventTypes={eventTypes}
+            emptyMessage={historyEmptyMessage}
+            onDeleteEvent={handleDeleteEvent}
+            deletingEventId={deletingEventId}
+          />
         </main>
       )}
 
